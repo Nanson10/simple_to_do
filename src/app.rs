@@ -14,6 +14,7 @@ pub fn run() -> io::Result<()> {
     ensure_data_dir()?;
     rebuild_todo_file()?;
     let mut session_default_day = current_local_date();
+    let mut omit_to_do = false;
 
     loop {
         println!();
@@ -22,7 +23,11 @@ pub fn run() -> io::Result<()> {
             "Session default day: {}",
             format_date_string(session_default_day)
         );
-        print_default_todo_view()?;
+        if omit_to_do {
+            omit_to_do = false;
+        } else {
+            print_default_todo_view()?;
+        }
 
         match prompt_choice("Choose an option: ")? {
             PromptChoice::Number(1) => add_task_flow(session_default_day)?,
@@ -39,7 +44,10 @@ pub fn run() -> io::Result<()> {
                 break;
             }
             PromptChoice::Number(_) => println!("Please choose a valid option."),
-            PromptChoice::NonParsable => print_main_command_help(),
+            PromptChoice::NonParsable => {
+                omit_to_do = true;
+                print_main_command_help();
+            }
         }
     }
 
