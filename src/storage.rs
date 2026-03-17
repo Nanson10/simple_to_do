@@ -175,7 +175,7 @@ fn read_tasks_from_file(path: &Path) -> io::Result<Vec<Task>> {
 fn write_tasks_to_file(path: &Path, tasks: &[Task]) -> io::Result<()> {
     let mut file = File::create(path)?;
     writeln!(file, "# Tasks")?;
-    writeln!(file, "# Format: [ ] pending, [x] completed")?;
+    writeln!(file, "# Format: [ ] pending, [x] completed, [~] cancelled")?;
     writeln!(file)?;
 
     for task in tasks {

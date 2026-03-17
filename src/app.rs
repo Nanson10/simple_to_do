@@ -10,6 +10,11 @@ use crate::ui::{
 use chrono::NaiveDate;
 use std::io;
 
+enum EditSource {
+    TodoList,
+    SpecificDay(NaiveDate),
+}
+
 pub fn run() -> io::Result<()> {
     ensure_data_dir()?;
     rebuild_todo_file()?;
@@ -31,12 +36,12 @@ pub fn run() -> io::Result<()> {
 
         match prompt_choice("Choose an option: ")? {
             PromptChoice::Number(1) => add_task_flow(session_default_day)?,
-            PromptChoice::Number(2) => complete_task_flow()?,
-            PromptChoice::Number(3) => cancel_task_flow()?,
-            PromptChoice::Number(4) => view_unfinished_flow()?,
-            PromptChoice::Number(5) => browse_by_day_flow()?,
-
-            PromptChoice::Number(6) => {
+            PromptChoice::Number(2) => edit_task_flow()?,
+            PromptChoice::Number(3) => complete_task_flow()?,
+            PromptChoice::Number(4) => cancel_task_flow()?,
+            PromptChoice::Number(5) => view_unfinished_flow()?,
+            PromptChoice::Number(6) => browse_by_day_flow()?,
+            PromptChoice::Number(7) => {
                 if let Some(selected_day) = select_session_default_day_flow(session_default_day)? {
                     session_default_day = selected_day;
                 }
@@ -102,6 +107,92 @@ fn add_task_flow(session_default_day: NaiveDate) -> io::Result<()> {
     Ok(())
 }
 
+fn edit_task_flow() -> io::Result<()> {
+    println!();
+    println!("--- Edit Task ---");
+
+    let Some(edit_source) = select_edit_source_flow()? else {
+        println!("Edit canceled.");
+        return Ok(());
+    };
+
+    let (current_label, target_day, target_index) = match edit_source {
+        EditSource::TodoList => {
+            let pending_tasks = collect_pending_tasks()?;
+            if pending_tasks.is_empty() {
+                println!("No unfinished tasks available.");
+                return Ok(());
+            }
+
+            let labels: Vec<String> = pending_tasks
+                .iter()
+                .map(|task| format!("[{}] {}", task.date, task.text))
+                .collect();
+
+            let Some(selected_index) = paginated_pick(&labels, "Pick a task to edit")? else {
+                println!("Edit canceled.");
+                return Ok(());
+            };
+
+            (
+                labels[selected_index].clone(),
+                pending_tasks[selected_index].date.clone(),
+                pending_tasks[selected_index].index_in_day,
+            )
+        }
+        EditSource::SpecificDay(day) => {
+            let target_day = format_date_string(day);
+            let tasks = read_tasks_for_day(&target_day)?;
+            if tasks.is_empty() {
+                println!("No tasks stored for {}.", target_day);
+                return Ok(());
+            }
+
+            let labels: Vec<String> = tasks.iter().map(format_task_label).collect();
+            let Some(selected_index) = paginated_pick(&labels, "Pick a task to edit")? else {
+                println!("Edit canceled.");
+                return Ok(());
+            };
+
+            (labels[selected_index].clone(), target_day, selected_index)
+        }
+    };
+
+    println!("Current: {}", current_label);
+
+    let revised_text = prompt_line("Enter revised task text (Enter deletes task): ")?;
+    let action_prompt = if revised_text.trim().is_empty() {
+        "Confirm delete? 1 = yes, 0 = no: "
+    } else {
+        "Confirm edit? 1 = yes, 0 = no: "
+    };
+
+    if !confirm_action(action_prompt)? {
+        println!("Edit canceled.");
+        return Ok(());
+    }
+
+    let mut day_tasks = read_tasks_for_day(&target_day)?;
+    if target_index >= day_tasks.len() {
+        println!("The task could not be found. Please try again.");
+        return Ok(());
+    }
+
+    if revised_text.trim().is_empty() {
+        let removed_task = day_tasks.remove(target_index);
+        write_tasks_for_day(&target_day, &day_tasks)?;
+        rebuild_todo_file()?;
+        println!("Deleted: [{}] {}", target_day, removed_task.text);
+        return Ok(());
+    }
+
+    day_tasks[target_index].text = revised_text.trim().to_string();
+    write_tasks_for_day(&target_day, &day_tasks)?;
+    rebuild_todo_file()?;
+    println!("Updated: [{}] {}", target_day, day_tasks[target_index].text);
+    Ok(())
+}
+
 fn select_session_default_day_flow(current_default: NaiveDate) -> io::Result<Option<NaiveDate>> {
     println!();
     println!("--- Set Session Default Day ---");
@@ -122,6 +213,41 @@ fn select_session_default_day_flow(current_default: NaiveDate) -> io::Result<Opt
         }
 
         println!("Invalid input. Enter an integer offset or YYYY-MM-DD.");
+    }
+}
+
+fn select_edit_source_flow() -> io::Result<Option<EditSource>> {
+    loop {
+        let input = prompt_line(
+            "Enter day offset integer or YYYY-MM-DD (Enter for to-do list, 0 to cancel): ",
+        )?;
+        let trimmed = input.trim();
+
+        if trimmed == "0" {
+            return Ok(None);
+        }
+
+        if trimmed.is_empty() {
+            return Ok(Some(EditSource::TodoList));
+        }
+
+        if let Some(day) = parse_day_selector(trimmed) {
+            return Ok(Some(EditSource::SpecificDay(day)));
+        }
+
+        println!(
+            "Invalid input. Enter an integer offset, YYYY-MM-DD, or press Enter for the to-do list."
+        );
+    }
+}
+
+fn confirm_action(prompt: &str) -> io::Result<bool> {
+    loop {
+        match prompt_choice(prompt)? {
+            PromptChoice::Number(1) => return Ok(true),
+            PromptChoice::Number(0) => return Ok(false),
+            _ => println!("Please enter 1 to confirm or 0 to cancel."),
+        }
     }
 }
 
@@ -243,22 +369,22 @@ fn browse_by_day_flow() -> io::Result<()> {
         return Ok(());
     }
 
-    let labels: Vec<String> = tasks
-        .iter()
-        .map(|task| {
-            let marker = if task.done {
-                "[x]"
-            } else if task.cancelled {
-                "[~]"
-            } else {
-                "[ ]"
-            };
-            format!("{} {}", marker, task.text)
-        })
-        .collect();
+    let labels: Vec<String> = tasks.iter().map(format_task_label).collect();
 
     println!();
     println!("Tasks for {}", day);
     let _ = paginated_pick_read_only(&labels, "Viewing tasks for selected day")?;
     Ok(())
+}
+
+fn format_task_label(task: &Task) -> String {
+    let marker = if task.done {
+        "[x]"
+    } else if task.cancelled {
+        "[~]"
+    } else {
+        "[ ]"
+    };
+
+    format!("{} {}", marker, task.text)
 }

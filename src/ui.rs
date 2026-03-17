@@ -6,11 +6,12 @@ const PAGE_SIZE: usize = 7;
 pub fn print_main_command_help() {
     println!("Command list:");
     println!("1. Add a task for session default day");
-    println!("2. Complete a task from to-do list");
-    println!("3. Cancel a task from to-do list");
-    println!("4. View unfinished to-do list");
-    println!("5. Browse tasks by day");
-    println!("6. Set session default day");
+    println!("2. Edit a task");
+    println!("3. Complete a task from to-do list");
+    println!("4. Cancel a task from to-do list");
+    println!("5. View unfinished to-do list");
+    println!("6. Browse tasks by day");
+    println!("7. Set session default day");
     println!("0. Exit");
 }
 
