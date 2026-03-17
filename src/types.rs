@@ -2,6 +2,7 @@
 pub struct Task {
     pub text: String,
     pub done: bool,
+    pub cancelled: bool,
 }
 
 #[derive(Clone, Debug)]

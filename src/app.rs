@@ -32,9 +32,11 @@ pub fn run() -> io::Result<()> {
         match prompt_choice("Choose an option: ")? {
             PromptChoice::Number(1) => add_task_flow(session_default_day)?,
             PromptChoice::Number(2) => complete_task_flow()?,
-            PromptChoice::Number(3) => view_unfinished_flow()?,
-            PromptChoice::Number(4) => browse_by_day_flow()?,
-            PromptChoice::Number(5) => {
+            PromptChoice::Number(3) => cancel_task_flow()?,
+            PromptChoice::Number(4) => view_unfinished_flow()?,
+            PromptChoice::Number(5) => browse_by_day_flow()?,
+
+            PromptChoice::Number(6) => {
                 if let Some(selected_day) = select_session_default_day_flow(session_default_day)? {
                     session_default_day = selected_day;
                 }
@@ -91,6 +93,7 @@ fn add_task_flow(session_default_day: NaiveDate) -> io::Result<()> {
     tasks.push(Task {
         text: task_text.to_string(),
         done: false,
+        cancelled: false,
     });
 
     write_tasks_for_day(&target_day, &tasks)?;
@@ -120,6 +123,50 @@ fn select_session_default_day_flow(current_default: NaiveDate) -> io::Result<Opt
 
         println!("Invalid input. Enter an integer offset or YYYY-MM-DD.");
     }
+}
+
+fn cancel_task_flow() -> io::Result<()> {
+    let pending_tasks = collect_pending_tasks()?;
+    if pending_tasks.is_empty() {
+        println!("No unfinished tasks available.");
+        return Ok(());
+    }
+
+    let labels: Vec<String> = pending_tasks
+        .iter()
+        .map(|task| format!("[{}] {}", task.date, task.text))
+        .collect();
+
+    println!();
+    println!("--- Cancel Task ---");
+    let Some(selected_index) = paginated_pick(&labels, "Pick a task to cancel")? else {
+        println!("Cancellation canceled.");
+        return Ok(());
+    };
+
+    let selected = &pending_tasks[selected_index];
+    let note_input = prompt_line("Cancellation note (Enter to skip, 0 to abort): ")?;
+    let trimmed_note = note_input.trim();
+
+    if trimmed_note == "0" {
+        println!("Cancellation canceled.");
+        return Ok(());
+    }
+
+    let mut day_tasks = read_tasks_for_day(&selected.date)?;
+    if let Some(task) = day_tasks.get_mut(selected.index_in_day) {
+        task.cancelled = true;
+        if !trimmed_note.is_empty() {
+            task.text = format!("{} (note: {})", task.text, trimmed_note);
+        }
+        write_tasks_for_day(&selected.date, &day_tasks)?;
+        rebuild_todo_file()?;
+        println!("Cancelled: [{}] {}", selected.date, selected.text);
+    } else {
+        println!("The task could not be found. Please try again.");
+    }
+
+    Ok(())
 }
 
 fn complete_task_flow() -> io::Result<()> {
@@ -199,7 +246,13 @@ fn browse_by_day_flow() -> io::Result<()> {
     let labels: Vec<String> = tasks
         .iter()
         .map(|task| {
-            let marker = if task.done { "[x]" } else { "[ ]" };
+            let marker = if task.done {
+                "[x]"
+            } else if task.cancelled {
+                "[~]"
+            } else {
+                "[ ]"
+            };
             format!("{} {}", marker, task.text)
         })
         .collect();

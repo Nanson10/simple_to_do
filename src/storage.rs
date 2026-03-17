@@ -68,7 +68,7 @@ pub fn collect_pending_tasks() -> io::Result<Vec<PendingTask>> {
 
         let tasks = read_tasks_for_day(&day)?;
         for (index, task) in tasks.iter().enumerate() {
-            if !task.done {
+            if !task.done && !task.cancelled {
                 pending.push(PendingTask {
                     date: day.clone(),
                     index_in_day: index,
@@ -120,6 +120,7 @@ fn parse_task_line(line: &str) -> Option<Task> {
         return Some(Task {
             text: rest.to_string(),
             done: false,
+            cancelled: false,
         });
     }
 
@@ -127,6 +128,15 @@ fn parse_task_line(line: &str) -> Option<Task> {
         return Some(Task {
             text: rest.to_string(),
             done: true,
+            cancelled: false,
+        });
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("[~] ") {
+        return Some(Task {
+            text: rest.to_string(),
+            done: false,
+            cancelled: true,
         });
     }
 
@@ -136,6 +146,8 @@ fn parse_task_line(line: &str) -> Option<Task> {
 fn format_task_line(task: &Task) -> String {
     if task.done {
         format!("[x] {}", task.text)
+    } else if task.cancelled {
+        format!("[~] {}", task.text)
     } else {
         format!("[ ] {}", task.text)
     }
