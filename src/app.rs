@@ -47,7 +47,7 @@ pub fn run() -> io::Result<()> {
                 }
             }
             PromptChoice::Number(0) => {
-                println!("Goodbye.");
+                println!("Goodbye!");
                 break;
             }
             PromptChoice::Number(_) => println!("Please choose a valid option."),
