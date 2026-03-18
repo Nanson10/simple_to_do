@@ -5,11 +5,18 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-const DATA_DIR: &str = "data";
 const TODO_FILE_NAME: &str = "to-do.txt";
 
+fn get_data_dir() -> &'static str {
+    if std::env::var("SIMPLE_TODO_TEST_MODE").is_ok() {
+        "test"
+    } else {
+        "data"
+    }
+}
+
 pub fn ensure_data_dir() -> io::Result<()> {
-    fs::create_dir_all(DATA_DIR)
+    fs::create_dir_all(get_data_dir())
 }
 
 pub fn read_tasks_for_day(date: &str) -> io::Result<Vec<Task>> {
@@ -103,7 +110,7 @@ pub fn rebuild_todo_file() -> io::Result<()> {
 }
 
 fn data_dir_path() -> PathBuf {
-    PathBuf::from(DATA_DIR)
+    PathBuf::from(get_data_dir())
 }
 
 fn day_file_path(date: &str) -> PathBuf {
