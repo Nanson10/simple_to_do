@@ -195,3 +195,238 @@ fn write_tasks_to_file(path: &Path, tasks: &[Task]) -> io::Result<()> {
 fn is_valid_date_string(text: &str) -> bool {
     NaiveDate::parse_from_str(text, "%Y-%m-%d").is_ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============ parse_task_line tests ============
+
+    #[test]
+    fn test_parse_pending_task() {
+        let task = parse_task_line("[ ] Buy groceries").unwrap();
+        assert_eq!(task.text, "Buy groceries");
+        assert!(!task.done);
+        assert!(!task.cancelled);
+    }
+
+    #[test]
+    fn test_parse_completed_task() {
+        let task = parse_task_line("[x] File taxes").unwrap();
+        assert_eq!(task.text, "File taxes");
+        assert!(task.done);
+        assert!(!task.cancelled);
+    }
+
+    #[test]
+    fn test_parse_cancelled_task() {
+        let task = parse_task_line("[~] Reschedule dentist").unwrap();
+        assert_eq!(task.text, "Reschedule dentist");
+        assert!(!task.done);
+        assert!(task.cancelled);
+    }
+
+    #[test]
+    fn test_parse_task_with_leading_whitespace() {
+        let task = parse_task_line("  [ ] Task with spaces").unwrap();
+        assert_eq!(task.text, "Task with spaces");
+        assert!(!task.done);
+        assert!(!task.cancelled);
+    }
+
+    #[test]
+    fn test_parse_task_with_trailing_whitespace() {
+        let task = parse_task_line("[ ] Task with spaces  ").unwrap();
+        assert_eq!(task.text, "Task with spaces");
+    }
+
+    #[test]
+    fn test_parse_invalid_prefix() {
+        assert!(parse_task_line("(-) Invalid marker").is_none());
+        assert!(parse_task_line("[!] Invalid marker").is_none());
+    }
+
+    #[test]
+    fn test_parse_no_marker() {
+        assert!(parse_task_line("Just text").is_none());
+    }
+
+    #[test]
+    fn test_parse_empty_line() {
+        assert!(parse_task_line("").is_none());
+    }
+
+    #[test]
+    fn test_parse_task_with_special_characters() {
+        let task = parse_task_line("[ ] Call Dr. Smith @ 3:00 PM").unwrap();
+        assert_eq!(task.text, "Call Dr. Smith @ 3:00 PM");
+    }
+
+    #[test]
+    fn test_parse_task_with_brackets_in_text() {
+        let task = parse_task_line("[ ] Task [important] [urgent]").unwrap();
+        assert_eq!(task.text, "Task [important] [urgent]");
+    }
+
+    // ============ format_task_line tests ============
+
+    #[test]
+    fn test_format_pending_task() {
+        let task = Task {
+            text: "Buy milk".to_string(),
+            done: false,
+            cancelled: false,
+        };
+        assert_eq!(format_task_line(&task), "[ ] Buy milk");
+    }
+
+    #[test]
+    fn test_format_completed_task() {
+        let task = Task {
+            text: "File taxes".to_string(),
+            done: true,
+            cancelled: false,
+        };
+        assert_eq!(format_task_line(&task), "[x] File taxes");
+    }
+
+    #[test]
+    fn test_format_cancelled_task() {
+        let task = Task {
+            text: "Reschedule meeting".to_string(),
+            done: false,
+            cancelled: true,
+        };
+        assert_eq!(format_task_line(&task), "[~] Reschedule meeting");
+    }
+
+    #[test]
+    fn test_format_done_and_cancelled_prefers_done() {
+        // If both are true, should prefer done marker
+        let task = Task {
+            text: "Task".to_string(),
+            done: true,
+            cancelled: true,
+        };
+        assert_eq!(format_task_line(&task), "[x] Task");
+    }
+
+    #[test]
+    fn test_format_task_empty_text() {
+        let task = Task {
+            text: "".to_string(),
+            done: false,
+            cancelled: false,
+        };
+        assert_eq!(format_task_line(&task), "[ ] ");
+    }
+
+    // ============ Round-trip tests (parse -> format -> parse) ============
+
+    #[test]
+    fn test_roundtrip_pending_task() {
+        let original = "[ ] Buy milk";
+        let task = parse_task_line(original).unwrap();
+        let formatted = format_task_line(&task);
+        assert_eq!(original, formatted);
+        let reparsed = parse_task_line(&formatted).unwrap();
+        assert_eq!(task.text, reparsed.text);
+        assert_eq!(task.done, reparsed.done);
+        assert_eq!(task.cancelled, reparsed.cancelled);
+    }
+
+    #[test]
+    fn test_roundtrip_completed_task() {
+        let original = "[x] File taxes";
+        let task = parse_task_line(original).unwrap();
+        let formatted = format_task_line(&task);
+        let reparsed = parse_task_line(&formatted).unwrap();
+        assert_eq!(task.text, reparsed.text);
+        assert!(reparsed.done);
+        assert!(!reparsed.cancelled);
+    }
+
+    #[test]
+    fn test_roundtrip_cancelled_task() {
+        let original = "[~] Reschedule";
+        let task = parse_task_line(original).unwrap();
+        let formatted = format_task_line(&task);
+        let reparsed = parse_task_line(&formatted).unwrap();
+        assert_eq!(task.text, reparsed.text);
+        assert!(!reparsed.done);
+        assert!(reparsed.cancelled);
+    }
+
+    // ============ is_valid_date_string tests ============
+
+    #[test]
+    fn test_valid_date_string() {
+        assert!(is_valid_date_string("2026-03-18"));
+        assert!(is_valid_date_string("2025-01-01"));
+        assert!(is_valid_date_string("2000-12-31"));
+    }
+
+    #[test]
+    fn test_invalid_date_format() {
+        assert!(!is_valid_date_string("03-18-2026")); // US format
+        assert!(!is_valid_date_string("18-03-2026")); // EU format
+        assert!(!is_valid_date_string("2026/03/18")); // Slash separator
+    }
+
+    #[test]
+    fn test_invalid_date_values() {
+        assert!(!is_valid_date_string("2026-13-01")); // Invalid month
+        assert!(!is_valid_date_string("2026-02-30")); // Invalid day for February
+        assert!(!is_valid_date_string("2026-04-31")); // Invalid day for April
+    }
+
+    #[test]
+    fn test_invalid_date_strings() {
+        assert!(!is_valid_date_string("not-a-date"));
+        assert!(!is_valid_date_string(""));
+        assert!(!is_valid_date_string("2026-03"));
+        assert!(!is_valid_date_string("2026"));
+    }
+
+    #[test]
+    fn test_leap_year_date() {
+        assert!(is_valid_date_string("2024-02-29")); // Valid leap year
+        assert!(!is_valid_date_string("2026-02-29")); // Invalid non-leap year
+    }
+
+    // ============ Task struct tests ============
+
+    #[test]
+    fn test_task_defaults() {
+        let task = Task {
+            text: "Test".to_string(),
+            done: false,
+            cancelled: false,
+        };
+        assert!(!task.done);
+        assert!(!task.cancelled);
+    }
+
+    #[test]
+    fn test_task_all_states() {
+        let pending = Task {
+            text: "Pending".to_string(),
+            done: false,
+            cancelled: false,
+        };
+        let done = Task {
+            text: "Done".to_string(),
+            done: true,
+            cancelled: false,
+        };
+        let cancelled = Task {
+            text: "Cancelled".to_string(),
+            done: false,
+            cancelled: true,
+        };
+
+        assert!(!pending.done && !pending.cancelled);
+        assert!(done.done && !done.cancelled);
+        assert!(!cancelled.done && cancelled.cancelled);
+    }
+}
