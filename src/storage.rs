@@ -80,6 +80,7 @@ pub fn collect_pending_tasks() -> io::Result<Vec<PendingTask>> {
                     date: day.clone(),
                     index_in_day: index,
                     text: task.text.clone(),
+                    due_date: task.due_date.clone(),
                 });
             }
         }
@@ -103,7 +104,8 @@ pub fn rebuild_todo_file() -> io::Result<()> {
     }
 
     for (display_index, task) in pending_tasks.iter().enumerate() {
-        writeln!(file, "{}. [{}] {}", display_index + 1, task.date, task.text)?;
+        let with_due = format_text_with_due(&task.text, &task.due_date);
+        writeln!(file, "{}. [{}] {}", display_index + 1, task.date, with_due)?;
     }
 
     Ok(())
@@ -124,26 +126,32 @@ fn todo_file_path() -> PathBuf {
 fn parse_task_line(line: &str) -> Option<Task> {
     let trimmed = line.trim();
     if let Some(rest) = trimmed.strip_prefix("[ ] ") {
+        let (text, due_date) = split_due_date(rest);
         return Some(Task {
-            text: rest.to_string(),
+            text,
             done: false,
             cancelled: false,
+            due_date,
         });
     }
 
     if let Some(rest) = trimmed.strip_prefix("[x] ") {
+        let (text, due_date) = split_due_date(rest);
         return Some(Task {
-            text: rest.to_string(),
+            text,
             done: true,
             cancelled: false,
+            due_date,
         });
     }
 
     if let Some(rest) = trimmed.strip_prefix("[~] ") {
+        let (text, due_date) = split_due_date(rest);
         return Some(Task {
-            text: rest.to_string(),
+            text,
             done: false,
             cancelled: true,
+            due_date,
         });
     }
 
@@ -152,11 +160,29 @@ fn parse_task_line(line: &str) -> Option<Task> {
 
 fn format_task_line(task: &Task) -> String {
     if task.done {
-        format!("[x] {}", task.text)
+        format!("[x] {}", format_text_with_due(&task.text, &task.due_date))
     } else if task.cancelled {
-        format!("[~] {}", task.text)
+        format!("[~] {}", format_text_with_due(&task.text, &task.due_date))
     } else {
-        format!("[ ] {}", task.text)
+        format!("[ ] {}", format_text_with_due(&task.text, &task.due_date))
+    }
+}
+
+fn split_due_date(text: &str) -> (String, Option<String>) {
+    if let Some((task_text, due_text)) = text.rsplit_once(" | due: ") {
+        if is_valid_date_string(due_text) {
+            return (task_text.to_string(), Some(due_text.to_string()));
+        }
+    }
+
+    (text.to_string(), None)
+}
+
+fn format_text_with_due(text: &str, due_date: &Option<String>) -> String {
+    if let Some(due_date) = due_date {
+        format!("{} | due: {}", text, due_date)
+    } else {
+        text.to_string()
     }
 }
 
@@ -182,7 +208,10 @@ fn read_tasks_from_file(path: &Path) -> io::Result<Vec<Task>> {
 fn write_tasks_to_file(path: &Path, tasks: &[Task]) -> io::Result<()> {
     let mut file = File::create(path)?;
     writeln!(file, "# Tasks")?;
-    writeln!(file, "# Format: [ ] pending, [x] completed, [~] cancelled")?;
+    writeln!(
+        file,
+        "# Format: [ ] pending, [x] completed, [~] cancelled; optional suffix: | due: YYYY-MM-DD"
+    )?;
     writeln!(file)?;
 
     for task in tasks {
@@ -268,6 +297,15 @@ mod tests {
         assert_eq!(task.text, "Task [important] [urgent]");
     }
 
+    #[test]
+    fn test_parse_task_with_due_date_suffix() {
+        let task = parse_task_line("[ ] Buy milk | due: 2026-03-21").unwrap();
+        assert_eq!(task.text, "Buy milk");
+        assert_eq!(task.due_date.as_deref(), Some("2026-03-21"));
+        assert!(!task.done);
+        assert!(!task.cancelled);
+    }
+
     // ============ format_task_line tests ============
 
     #[test]
@@ -276,6 +314,7 @@ mod tests {
             text: "Buy milk".to_string(),
             done: false,
             cancelled: false,
+            due_date: None,
         };
         assert_eq!(format_task_line(&task), "[ ] Buy milk");
     }
@@ -286,6 +325,7 @@ mod tests {
             text: "File taxes".to_string(),
             done: true,
             cancelled: false,
+            due_date: None,
         };
         assert_eq!(format_task_line(&task), "[x] File taxes");
     }
@@ -296,6 +336,7 @@ mod tests {
             text: "Reschedule meeting".to_string(),
             done: false,
             cancelled: true,
+            due_date: None,
         };
         assert_eq!(format_task_line(&task), "[~] Reschedule meeting");
     }
@@ -307,6 +348,7 @@ mod tests {
             text: "Task".to_string(),
             done: true,
             cancelled: true,
+            due_date: None,
         };
         assert_eq!(format_task_line(&task), "[x] Task");
     }
@@ -317,8 +359,20 @@ mod tests {
             text: "".to_string(),
             done: false,
             cancelled: false,
+            due_date: None,
         };
         assert_eq!(format_task_line(&task), "[ ] ");
+    }
+
+    #[test]
+    fn test_format_task_with_due_date() {
+        let task = Task {
+            text: "Buy milk".to_string(),
+            done: false,
+            cancelled: false,
+            due_date: Some("2026-03-21".to_string()),
+        };
+        assert_eq!(format_task_line(&task), "[ ] Buy milk | due: 2026-03-21");
     }
 
     // ============ Round-trip tests (parse -> format -> parse) ============
@@ -333,6 +387,17 @@ mod tests {
         assert_eq!(task.text, reparsed.text);
         assert_eq!(task.done, reparsed.done);
         assert_eq!(task.cancelled, reparsed.cancelled);
+    }
+
+    #[test]
+    fn test_roundtrip_task_with_due_date() {
+        let original = "[ ] Buy milk | due: 2026-03-21";
+        let task = parse_task_line(original).unwrap();
+        let formatted = format_task_line(&task);
+        assert_eq!(original, formatted);
+        let reparsed = parse_task_line(&formatted).unwrap();
+        assert_eq!(task.text, reparsed.text);
+        assert_eq!(task.due_date, reparsed.due_date);
     }
 
     #[test]
@@ -402,6 +467,7 @@ mod tests {
             text: "Test".to_string(),
             done: false,
             cancelled: false,
+            due_date: None,
         };
         assert!(!task.done);
         assert!(!task.cancelled);
@@ -413,16 +479,19 @@ mod tests {
             text: "Pending".to_string(),
             done: false,
             cancelled: false,
+            due_date: None,
         };
         let done = Task {
             text: "Done".to_string(),
             done: true,
             cancelled: false,
+            due_date: None,
         };
         let cancelled = Task {
             text: "Cancelled".to_string(),
             done: false,
             cancelled: true,
+            due_date: None,
         };
 
         assert!(!pending.done && !pending.cancelled);

@@ -15,6 +15,11 @@ enum EditSource {
     SpecificDay(NaiveDate),
 }
 
+enum EditSubcommand {
+    Text,
+    DueDate,
+}
+
 pub fn run() -> io::Result<()> {
     ensure_data_dir()?;
     rebuild_todo_file()?;
@@ -73,7 +78,12 @@ fn print_default_todo_view() -> io::Result<()> {
     // Print in reverse so the earliest task in logical order appears closest to the prompt.
     for (offset, task) in pending_tasks.iter().rev().enumerate() {
         let original_index = pending_tasks.len() - offset;
-        println!("{}. [{}] {}", original_index, task.date, task.text);
+        println!(
+            "{}. [{}] {}",
+            original_index,
+            task.date,
+            format_task_text_with_due(task)
+        );
     }
 
     Ok(())
@@ -101,6 +111,7 @@ fn add_task_flow(session_default_day: NaiveDate) -> io::Result<()> {
         text: task_text.to_string(),
         done: false,
         cancelled: false,
+        due_date: None,
     });
 
     write_tasks_for_day(&target_day, &tasks)?;
@@ -128,7 +139,7 @@ fn edit_task_flow() -> io::Result<()> {
 
             let labels: Vec<String> = pending_tasks
                 .iter()
-                .map(|task| format!("[{}] {}", task.date, task.text))
+                .map(|task| format!("[{}] {}", task.date, format_task_text_with_due(task)))
                 .collect();
 
             let Some(selected_index) = paginated_pick(&labels, "Pick a task to edit")? else {
@@ -162,6 +173,39 @@ fn edit_task_flow() -> io::Result<()> {
 
     println!("Current: {}", current_label);
 
+    let Some(edit_subcommand) = select_edit_subcommand_flow()? else {
+        println!("Edit canceled.");
+        return Ok(());
+    };
+
+    match edit_subcommand {
+        EditSubcommand::Text => edit_task_text(&target_day, target_index),
+        EditSubcommand::DueDate => edit_task_due_date(&target_day, target_index),
+    }?;
+
+    Ok(())
+}
+
+fn select_edit_subcommand_flow() -> io::Result<Option<EditSubcommand>> {
+    loop {
+        match prompt_choice("Edit command (1 = text, 2 = due date, 0 = cancel): ")? {
+            PromptChoice::Number(1) => return Ok(Some(EditSubcommand::Text)),
+            PromptChoice::Number(2) => return Ok(Some(EditSubcommand::DueDate)),
+            PromptChoice::Number(0) => return Ok(None),
+            PromptChoice::Number(_) => println!("Please choose a valid option."),
+            PromptChoice::NonParsable => print_edit_subcommand_help(),
+        }
+    }
+}
+
+fn print_edit_subcommand_help() {
+    println!("Command list:");
+    println!("1. Edit task text");
+    println!("2. Edit due date");
+    println!("0. Cancel");
+}
+
+fn edit_task_text(target_day: &str, target_index: usize) -> io::Result<()> {
     let revised_text = prompt_line("Enter revised task text (Enter deletes task): ")?;
     let action_prompt = if revised_text.trim().is_empty() {
         "Confirm delete? 1 = yes, 0 = no: "
@@ -174,7 +218,7 @@ fn edit_task_flow() -> io::Result<()> {
         return Ok(());
     }
 
-    let mut day_tasks = read_tasks_for_day(&target_day)?;
+    let mut day_tasks = read_tasks_for_day(target_day)?;
     if target_index >= day_tasks.len() {
         println!("The task could not be found. Please try again.");
         return Ok(());
@@ -182,16 +226,65 @@ fn edit_task_flow() -> io::Result<()> {
 
     if revised_text.trim().is_empty() {
         let removed_task = day_tasks.remove(target_index);
-        write_tasks_for_day(&target_day, &day_tasks)?;
+        write_tasks_for_day(target_day, &day_tasks)?;
         rebuild_todo_file()?;
         println!("Deleted: [{}] {}", target_day, removed_task.text);
         return Ok(());
     }
 
     day_tasks[target_index].text = revised_text.trim().to_string();
-    write_tasks_for_day(&target_day, &day_tasks)?;
+    write_tasks_for_day(target_day, &day_tasks)?;
     rebuild_todo_file()?;
     println!("Updated: [{}] {}", target_day, day_tasks[target_index].text);
+    Ok(())
+}
+
+fn edit_task_due_date(target_day: &str, target_index: usize) -> io::Result<()> {
+    let mut day_tasks = read_tasks_for_day(target_day)?;
+    if target_index >= day_tasks.len() {
+        println!("The task could not be found. Please try again.");
+        return Ok(());
+    }
+
+    let task = &day_tasks[target_index];
+    match &task.due_date {
+        Some(due_date) => println!("Current due date: {}", due_date),
+        None => println!("Current due date: none"),
+    }
+
+    println!("Enter due day offset integer or YYYY-MM-DD (Enter clears due date).");
+
+    let new_due_date = loop {
+        let input = prompt_line("New due date: ")?;
+        let trimmed = input.trim();
+
+        if trimmed.is_empty() {
+            break None;
+        }
+
+        if let Some(day) = parse_day_selector(trimmed) {
+            break Some(format_date_string(day));
+        }
+
+        println!("Invalid input. Enter an integer offset, YYYY-MM-DD, or press Enter to clear.");
+    };
+
+    if !confirm_action("Confirm due date update? 1 = yes, 0 = no: ")? {
+        println!("Due date update canceled.");
+        return Ok(());
+    }
+
+    day_tasks[target_index].due_date = new_due_date;
+    write_tasks_for_day(target_day, &day_tasks)?;
+    rebuild_todo_file()?;
+
+    let updated_task = &day_tasks[target_index];
+    println!(
+        "Updated: [{}] {}",
+        target_day,
+        format_task_label(updated_task)
+    );
+
     Ok(())
 }
 
@@ -257,7 +350,7 @@ fn cancel_task_flow() -> io::Result<()> {
 
     let labels: Vec<String> = pending_tasks
         .iter()
-        .map(|task| format!("[{}] {}", task.date, task.text))
+        .map(|task| format!("[{}] {}", task.date, format_task_text_with_due(task)))
         .collect();
 
     println!();
@@ -301,7 +394,7 @@ fn complete_task_flow() -> io::Result<()> {
 
     let labels: Vec<String> = pending_tasks
         .iter()
-        .map(|task| format!("[{}] {}", task.date, task.text))
+        .map(|task| format!("[{}] {}", task.date, format_task_text_with_due(task)))
         .collect();
 
     println!();
@@ -334,7 +427,7 @@ fn view_unfinished_flow() -> io::Result<()> {
 
     let labels: Vec<String> = pending_tasks
         .iter()
-        .map(|task| format!("[{}] {}", task.date, task.text))
+        .map(|task| format!("[{}] {}", task.date, format_task_text_with_due(task)))
         .collect();
 
     println!();
@@ -383,5 +476,17 @@ fn format_task_label(task: &Task) -> String {
         "[ ]"
     };
 
-    format!("{} {}", marker, task.text)
+    if let Some(due_date) = &task.due_date {
+        format!("{} {} (due: {})", marker, task.text, due_date)
+    } else {
+        format!("{} {}", marker, task.text)
+    }
+}
+
+fn format_task_text_with_due(task: &crate::types::PendingTask) -> String {
+    if let Some(due_date) = &task.due_date {
+        format!("{} (due: {})", task.text, due_date)
+    } else {
+        task.text.clone()
+    }
 }
