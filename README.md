@@ -38,7 +38,7 @@ Or run release mode:
 cargo run --release
 ```
 
-Run with isolated test data directory (`test/` instead of `data/`):
+Run with isolated test data directory (`~/.simple_to_do/test` instead of `~/.simple_to_do/data`):
 
 ```bash
 cargo run -- --test
@@ -54,6 +54,50 @@ If needed, make it executable first:
 
 ```bash
 chmod +x run.sh
+```
+
+## Install / Uninstall
+
+Install to user-local bin:
+
+```bash
+chmod +x install.sh uninstall.sh
+./install.sh
+```
+
+The install script:
+
+- Builds and tests the project.
+- Installs binary to `~/.local/bin/simple_to_do`.
+- Creates alias `~/.local/bin/std` -> `~/.local/bin/simple_to_do`.
+
+After install, you can run either command:
+
+```bash
+simple_to_do
+std
+```
+
+Uninstall:
+
+```bash
+./uninstall.sh
+```
+
+If commands are not found, add user-local bin to your shell PATH:
+
+For zsh (MacOS):
+
+```zsh
+grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' ~/.zshrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+For bash (Linux):
+
+```bash
+grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
 ## Main Menu
