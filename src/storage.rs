@@ -1,6 +1,7 @@
 use crate::date_utils::current_local_date;
 use crate::types::{PendingTask, Task};
 use chrono::NaiveDate;
+use std::cmp::Ordering;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -90,7 +91,8 @@ pub fn collect_pending_tasks() -> io::Result<Vec<PendingTask>> {
 }
 
 pub fn rebuild_todo_file() -> io::Result<()> {
-    let pending_tasks = collect_pending_tasks()?;
+    let mut pending_tasks = collect_pending_tasks()?;
+    sort_pending_tasks_by_precedence(&mut pending_tasks);
     let path = todo_file_path();
     let mut file = File::create(path)?;
 
@@ -184,6 +186,40 @@ fn format_text_with_due(text: &str, due_date: &Option<String>) -> String {
     } else {
         text.to_string()
     }
+}
+
+fn sort_pending_tasks_by_precedence(tasks: &mut [PendingTask]) {
+    tasks.sort_by(compare_pending_tasks);
+}
+
+fn compare_pending_tasks(left: &PendingTask, right: &PendingTask) -> Ordering {
+    let left_due = parse_valid_due_date(left.due_date.as_deref());
+    let right_due = parse_valid_due_date(right.due_date.as_deref());
+
+    // 1) Due date precedence: due dates first, earliest date first (most overdue first)
+    let due_cmp = match (left_due, right_due) {
+        (Some(left_due), Some(right_due)) => left_due.cmp(&right_due),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    };
+
+    if due_cmp != Ordering::Equal {
+        return due_cmp;
+    }
+
+    // 2) Descending by age: older task-day first
+    let age_cmp = left.date.cmp(&right.date);
+    if age_cmp != Ordering::Equal {
+        return age_cmp;
+    }
+
+    // 3) Original insertion order inside a day
+    left.index_in_day.cmp(&right.index_in_day)
+}
+
+fn parse_valid_due_date(value: Option<&str>) -> Option<NaiveDate> {
+    value.and_then(|text| NaiveDate::parse_from_str(text, "%Y-%m-%d").ok())
 }
 
 fn read_tasks_from_file(path: &Path) -> io::Result<Vec<Task>> {
@@ -497,5 +533,83 @@ mod tests {
         assert!(!pending.done && !pending.cancelled);
         assert!(done.done && !done.cancelled);
         assert!(!cancelled.done && cancelled.cancelled);
+    }
+
+    // ============ precedence sorting tests ============
+
+    #[test]
+    fn test_sort_precedence_due_dates_before_none() {
+        let mut tasks = vec![
+            PendingTask {
+                date: "2026-03-18".to_string(),
+                index_in_day: 0,
+                text: "No due".to_string(),
+                due_date: None,
+            },
+            PendingTask {
+                date: "2026-03-18".to_string(),
+                index_in_day: 1,
+                text: "Has due".to_string(),
+                due_date: Some("2026-03-20".to_string()),
+            },
+        ];
+
+        sort_pending_tasks_by_precedence(&mut tasks);
+
+        assert_eq!(tasks[0].text, "Has due");
+        assert_eq!(tasks[1].text, "No due");
+    }
+
+    #[test]
+    fn test_sort_precedence_most_overdue_first() {
+        let mut tasks = vec![
+            PendingTask {
+                date: "2026-03-18".to_string(),
+                index_in_day: 0,
+                text: "Due later".to_string(),
+                due_date: Some("2026-03-25".to_string()),
+            },
+            PendingTask {
+                date: "2026-03-18".to_string(),
+                index_in_day: 1,
+                text: "Most overdue".to_string(),
+                due_date: Some("2026-03-10".to_string()),
+            },
+        ];
+
+        sort_pending_tasks_by_precedence(&mut tasks);
+
+        assert_eq!(tasks[0].text, "Most overdue");
+        assert_eq!(tasks[1].text, "Due later");
+    }
+
+    #[test]
+    fn test_sort_precedence_age_then_insertion_order() {
+        let mut tasks = vec![
+            PendingTask {
+                date: "2026-03-18".to_string(),
+                index_in_day: 1,
+                text: "Newer day".to_string(),
+                due_date: None,
+            },
+            PendingTask {
+                date: "2026-03-16".to_string(),
+                index_in_day: 1,
+                text: "Older day later insert".to_string(),
+                due_date: None,
+            },
+            PendingTask {
+                date: "2026-03-16".to_string(),
+                index_in_day: 0,
+                text: "Older day earlier insert".to_string(),
+                due_date: None,
+            },
+        ];
+
+        sort_pending_tasks_by_precedence(&mut tasks);
+
+        assert_eq!(tasks[0].text, "Older day earlier insert");
+        assert_eq!(tasks[1].text, "Older day later insert");
+        assert_eq!(tasks[2].text, "Newer day");
     }
 }
