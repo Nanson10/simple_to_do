@@ -76,12 +76,10 @@ fn print_default_todo_view() -> io::Result<()> {
         return Ok(());
     }
 
-    // Print in reverse so the earliest task in logical order appears closest to the prompt.
-    for (offset, task) in pending_tasks.iter().rev().enumerate() {
-        let original_index = pending_tasks.len() - offset;
+    for (index, task) in pending_tasks.iter().enumerate() {
         println!(
             "{}. [{}] {}",
-            original_index,
+            index + 1,
             task.date,
             format_task_text_with_due(task)
         );
