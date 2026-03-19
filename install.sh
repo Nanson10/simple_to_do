@@ -26,4 +26,3 @@ ln -sfn "$BIN_PATH" "$ALIAS_PATH"
 clear
 
 "$BIN_PATH"
-clear
