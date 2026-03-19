@@ -91,9 +91,14 @@ pub fn collect_pending_tasks() -> io::Result<Vec<PendingTask>> {
     Ok(pending)
 }
 
-pub fn rebuild_todo_file() -> io::Result<()> {
+pub fn collect_pending_tasks_sorted() -> io::Result<Vec<PendingTask>> {
     let mut pending_tasks = collect_pending_tasks()?;
     sort_pending_tasks_by_precedence(&mut pending_tasks);
+    Ok(pending_tasks)
+}
+
+pub fn rebuild_todo_file() -> io::Result<()> {
+    let pending_tasks = collect_pending_tasks_sorted()?;
     let path = todo_file_path();
     let mut file = File::create(path)?;
 

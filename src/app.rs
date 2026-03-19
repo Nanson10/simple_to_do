@@ -1,7 +1,7 @@
 use crate::date_utils::{current_local_date, format_date_string, parse_day_selector};
 use crate::storage::{
-    collect_pending_tasks, ensure_data_dir, list_day_files, read_tasks_for_day, rebuild_todo_file,
-    write_tasks_for_day,
+    collect_pending_tasks_sorted, ensure_data_dir, list_day_files, read_tasks_for_day,
+    rebuild_todo_file, write_tasks_for_day,
 };
 use crate::types::{PendingTask, PromptChoice, Task, TaskMetadata};
 use crate::ui::{
@@ -67,7 +67,7 @@ pub fn run() -> io::Result<()> {
 }
 
 fn print_default_todo_view() -> io::Result<()> {
-    let pending_tasks = collect_pending_tasks()?;
+    let pending_tasks = collect_pending_tasks_sorted()?;
     println!("--- Unfinished Tasks ---");
 
     if pending_tasks.is_empty() {
@@ -125,6 +125,11 @@ fn edit_task_flow() -> io::Result<()> {
     println!();
     println!("--- Edit Task ---");
 
+    let Some(edit_subcommand) = select_edit_subcommand_flow()? else {
+        println!("Edit canceled.");
+        return Ok(());
+    };
+
     let Some(edit_source) = select_edit_source_flow()? else {
         println!("Edit canceled.");
         return Ok(());
@@ -132,7 +137,7 @@ fn edit_task_flow() -> io::Result<()> {
 
     let (current_label, target_day, target_index) = match edit_source {
         EditSource::TodoList => {
-            let pending_tasks = collect_pending_tasks()?;
+            let pending_tasks = collect_pending_tasks_sorted()?;
             if pending_tasks.is_empty() {
                 println!("No unfinished tasks available.");
                 return Ok(());
@@ -174,11 +179,6 @@ fn edit_task_flow() -> io::Result<()> {
 
     println!("Current: {}", current_label);
 
-    let Some(edit_subcommand) = select_edit_subcommand_flow()? else {
-        println!("Edit canceled.");
-        return Ok(());
-    };
-
     match edit_subcommand {
         EditSubcommand::Text => edit_task_text(&target_day, target_index),
         EditSubcommand::DueDate => edit_task_due_date(&target_day, target_index),
@@ -188,6 +188,8 @@ fn edit_task_flow() -> io::Result<()> {
 }
 
 fn select_edit_subcommand_flow() -> io::Result<Option<EditSubcommand>> {
+    print_edit_subcommand_help();
+
     loop {
         match prompt_choice("Edit command (1 = text, 2 = due date, 0 = cancel): ")? {
             PromptChoice::Number(1) => return Ok(Some(EditSubcommand::Text)),
@@ -343,7 +345,7 @@ fn confirm_action(prompt: &str) -> io::Result<bool> {
 }
 
 fn cancel_task_flow() -> io::Result<()> {
-    let pending_tasks = collect_pending_tasks()?;
+    let pending_tasks = collect_pending_tasks_sorted()?;
     if pending_tasks.is_empty() {
         println!("No unfinished tasks available.");
         return Ok(());
@@ -390,7 +392,7 @@ fn cancel_task_flow() -> io::Result<()> {
 }
 
 fn complete_task_flow() -> io::Result<()> {
-    let pending_tasks = collect_pending_tasks()?;
+    let pending_tasks = collect_pending_tasks_sorted()?;
     if pending_tasks.is_empty() {
         println!("No unfinished tasks available.");
         return Ok(());
@@ -423,7 +425,7 @@ fn complete_task_flow() -> io::Result<()> {
 }
 
 fn view_unfinished_flow() -> io::Result<()> {
-    let pending_tasks = collect_pending_tasks()?;
+    let pending_tasks = collect_pending_tasks_sorted()?;
     if pending_tasks.is_empty() {
         println!("No unfinished tasks available.");
         return Ok(());
