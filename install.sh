@@ -7,19 +7,23 @@ BIN_DIR="$HOME/.local/bin"
 BIN_PATH="$BIN_DIR/simple_to_do"
 ALIAS_PATH="$BIN_DIR/std"
 
-echo "Building for testing (1/3)"
+echo "Building for testing (1/4)"
 cargo build
-
 clear
-echo "Running Tests (2/3)"
+
+echo "Running Tests (2/4)"
 cargo test
-
 clear
-echo "Installing Application (3/3)"
+
+echo "Building Application for release (3/4)"
 cargo build --release
+clear
+
+echo "Installing Application (4/4)"
 mkdir -p "$BIN_DIR"
 install -m 755 target/release/simple_to_do "$BIN_PATH"
 ln -sfn "$BIN_PATH" "$ALIAS_PATH"
 clear
+
 "$BIN_PATH"
 clear
