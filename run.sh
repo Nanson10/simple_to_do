@@ -1,8 +1,17 @@
 #!/bin/bash
 cd $(dirname "$0")
-cargo test &> /dev/null
+cargo build
+if [ "$?" -ne 0 ]; then
+    echo "Build failed"
+    return 1
+fi
+clear
+cargo test
 if [ "$?" -ne 0 ]; then
     echo "Tests failed"
     return 1
 fi
-cargo run --release
+clear
+cargo build --release &&
+clear
+./target/release/simple_to_do
