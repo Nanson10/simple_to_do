@@ -3,7 +3,7 @@ use crate::storage::{
     collect_pending_tasks, ensure_data_dir, list_day_files, read_tasks_for_day, rebuild_todo_file,
     write_tasks_for_day,
 };
-use crate::types::{PromptChoice, Task};
+use crate::types::{PendingTask, PromptChoice, Task, TaskMetadata};
 use crate::ui::{
     paginated_pick, paginated_pick_read_only, print_main_command_help, prompt_choice, prompt_line,
 };
@@ -112,6 +112,7 @@ fn add_task_flow(session_default_day: NaiveDate) -> io::Result<()> {
         done: false,
         cancelled: false,
         due_date: None,
+        metadata: Vec::new(),
     });
 
     write_tasks_for_day(&target_day, &tasks)?;
@@ -373,7 +374,10 @@ fn cancel_task_flow() -> io::Result<()> {
     if let Some(task) = day_tasks.get_mut(selected.index_in_day) {
         task.cancelled = true;
         if !trimmed_note.is_empty() {
-            task.text = format!("{} (note: {})", task.text, trimmed_note);
+            task.metadata.push(TaskMetadata {
+                key: "note".to_string(),
+                content: trimmed_note.to_string(),
+            });
         }
         write_tasks_for_day(&selected.date, &day_tasks)?;
         rebuild_todo_file()?;
@@ -476,17 +480,56 @@ fn format_task_label(task: &Task) -> String {
         "[ ]"
     };
 
-    if let Some(due_date) = &task.due_date {
-        format!("{} {} (due: {})", marker, task.text, due_date)
+    format!(
+        "{} {}",
+        marker,
+        format_task_payload_with_metadata(&task.text, &task.due_date, &task.metadata)
+    )
+}
+
+fn format_task_text_with_due(task: &PendingTask) -> String {
+    format_task_payload_with_metadata(&task.text, &task.due_date, &task.metadata)
+}
+
+fn format_task_payload_with_metadata(
+    text: &str,
+    due_date: &Option<String>,
+    metadata: &[TaskMetadata],
+) -> String {
+    let mut payload = text.to_string();
+
+    if let Some(due_date) = due_date {
+        payload = append_task_metadata_token(&payload, "due", due_date);
+    }
+
+    for entry in metadata {
+        payload = append_task_metadata_token(&payload, &entry.key, &entry.content);
+    }
+
+    payload
+}
+
+fn append_task_metadata_token(text: &str, key: &str, content: &str) -> String {
+    let escaped_content = escape_metadata_content(content);
+    if text.is_empty() {
+        format!("({}:{})", key, escaped_content)
     } else {
-        format!("{} {}", marker, task.text)
+        format!("{} ({}:{})", text, key, escaped_content)
     }
 }
 
-fn format_task_text_with_due(task: &crate::types::PendingTask) -> String {
-    if let Some(due_date) = &task.due_date {
-        format!("{} (due: {})", task.text, due_date)
-    } else {
-        task.text.clone()
+fn escape_metadata_content(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+
+    for ch in value.chars() {
+        match ch {
+            '\\' | '(' | ')' | ':' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
     }
+
+    escaped
 }

@@ -1,5 +1,5 @@
 use crate::date_utils::current_local_date;
-use crate::types::{PendingTask, Task};
+use crate::types::{PendingTask, Task, TaskMetadata};
 use chrono::NaiveDate;
 use std::cmp::Ordering;
 use std::fs::{self, File};
@@ -82,6 +82,7 @@ pub fn collect_pending_tasks() -> io::Result<Vec<PendingTask>> {
                     index_in_day: index,
                     text: task.text.clone(),
                     due_date: task.due_date.clone(),
+                    metadata: task.metadata.clone(),
                 });
             }
         }
@@ -106,8 +107,8 @@ pub fn rebuild_todo_file() -> io::Result<()> {
     }
 
     for (display_index, task) in pending_tasks.iter().enumerate() {
-        let with_due = format_text_with_due(&task.text, &task.due_date);
-        writeln!(file, "{}. [{}] {}", display_index + 1, task.date, with_due)?;
+        let formatted = format_task_payload(&task.text, &task.due_date, &task.metadata);
+        writeln!(file, "{}. [{}] {}", display_index + 1, task.date, formatted)?;
     }
 
     Ok(())
@@ -128,32 +129,35 @@ fn todo_file_path() -> PathBuf {
 fn parse_task_line(line: &str) -> Option<Task> {
     let trimmed = line.trim();
     if let Some(rest) = trimmed.strip_prefix("[ ] ") {
-        let (text, due_date) = split_due_date(rest);
+        let (text, due_date, metadata) = split_task_payload(rest);
         return Some(Task {
             text,
             done: false,
             cancelled: false,
             due_date,
+            metadata,
         });
     }
 
     if let Some(rest) = trimmed.strip_prefix("[x] ") {
-        let (text, due_date) = split_due_date(rest);
+        let (text, due_date, metadata) = split_task_payload(rest);
         return Some(Task {
             text,
             done: true,
             cancelled: false,
             due_date,
+            metadata,
         });
     }
 
     if let Some(rest) = trimmed.strip_prefix("[~] ") {
-        let (text, due_date) = split_due_date(rest);
+        let (text, due_date, metadata) = split_task_payload(rest);
         return Some(Task {
             text,
             done: false,
             cancelled: true,
             due_date,
+            metadata,
         });
     }
 
@@ -161,30 +165,157 @@ fn parse_task_line(line: &str) -> Option<Task> {
 }
 
 fn format_task_line(task: &Task) -> String {
+    let payload = format_task_payload(&task.text, &task.due_date, &task.metadata);
     if task.done {
-        format!("[x] {}", format_text_with_due(&task.text, &task.due_date))
+        format!("[x] {}", payload)
     } else if task.cancelled {
-        format!("[~] {}", format_text_with_due(&task.text, &task.due_date))
+        format!("[~] {}", payload)
     } else {
-        format!("[ ] {}", format_text_with_due(&task.text, &task.due_date))
+        format!("[ ] {}", payload)
     }
 }
 
-fn split_due_date(text: &str) -> (String, Option<String>) {
-    if let Some((task_text, due_text)) = text.rsplit_once(" | due: ") {
-        if is_valid_date_string(due_text) {
-            return (task_text.to_string(), Some(due_text.to_string()));
+fn split_task_payload(text: &str) -> (String, Option<String>, Vec<TaskMetadata>) {
+    let trimmed = text.trim_end();
+
+    let mut remaining = trimmed.to_string();
+    let mut due_date = None;
+    let mut metadata_reversed: Vec<TaskMetadata> = Vec::new();
+
+    while let Some((prefix, key, content)) = parse_trailing_metadata_token(&remaining) {
+        remaining = prefix;
+
+        if key == "due" && due_date.is_none() && is_valid_date_string(&content) {
+            due_date = Some(content);
+        } else {
+            metadata_reversed.push(TaskMetadata { key, content });
         }
     }
 
-    (text.to_string(), None)
+    metadata_reversed.reverse();
+    (
+        remaining.trim_end().to_string(),
+        due_date,
+        metadata_reversed,
+    )
 }
 
-fn format_text_with_due(text: &str, due_date: &Option<String>) -> String {
+fn format_task_payload(text: &str, due_date: &Option<String>, metadata: &[TaskMetadata]) -> String {
+    let mut payload = text.to_string();
+
     if let Some(due_date) = due_date {
-        format!("{} | due: {}", text, due_date)
+        payload = append_metadata_token(&payload, "due", due_date);
+    }
+
+    for entry in metadata {
+        payload = append_metadata_token(&payload, &entry.key, &entry.content);
+    }
+
+    payload
+}
+
+fn parse_trailing_metadata_token(text: &str) -> Option<(String, String, String)> {
+    let token_start = text.rfind(" (")? + 1;
+    let token = &text[token_start..];
+    let (key, value) = parse_metadata_token(token)?;
+
+    Some((text[..token_start - 1].to_string(), key, value))
+}
+
+fn parse_metadata_token(token: &str) -> Option<(String, String)> {
+    if !token.starts_with('(') || !token.ends_with(')') {
+        return None;
+    }
+
+    let inner = &token[1..token.len() - 1];
+    let separator_index = find_unescaped_colon(inner)?;
+
+    let key = inner[..separator_index].trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    let raw_value = &inner[separator_index + 1..];
+    let value = unescape_metadata_content(raw_value);
+    Some((key.to_string(), value))
+}
+
+fn find_unescaped_colon(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b':' && !is_escaped(text, index) {
+            return Some(index);
+        }
+    }
+
+    None
+}
+
+fn is_escaped(text: &str, index: usize) -> bool {
+    if index == 0 {
+        return false;
+    }
+
+    let bytes = text.as_bytes();
+    let mut slash_count = 0;
+    let mut cursor = index;
+
+    while cursor > 0 {
+        cursor -= 1;
+        if bytes[cursor] == b'\\' {
+            slash_count += 1;
+        } else {
+            break;
+        }
+    }
+
+    slash_count % 2 == 1
+}
+
+fn escape_metadata_content(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+
+    for ch in value.chars() {
+        match ch {
+            '\\' | '(' | ')' | ':' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+    }
+
+    escaped
+}
+
+fn unescape_metadata_content(value: &str) -> String {
+    let mut unescaped = String::with_capacity(value.len());
+    let mut pending_escape = false;
+
+    for ch in value.chars() {
+        if pending_escape {
+            unescaped.push(ch);
+            pending_escape = false;
+        } else if ch == '\\' {
+            pending_escape = true;
+        } else {
+            unescaped.push(ch);
+        }
+    }
+
+    if pending_escape {
+        unescaped.push('\\');
+    }
+
+    unescaped
+}
+
+fn append_metadata_token(text: &str, key: &str, content: &str) -> String {
+    let escaped_content = escape_metadata_content(content);
+    if text.is_empty() {
+        format!("({}:{})", key, escaped_content)
     } else {
-        text.to_string()
+        format!("{} ({}:{})", text, key, escaped_content)
     }
 }
 
@@ -246,7 +377,11 @@ fn write_tasks_to_file(path: &Path, tasks: &[Task]) -> io::Result<()> {
     writeln!(file, "# Tasks")?;
     writeln!(
         file,
-        "# Format: [ ] pending, [x] completed, [~] cancelled; optional suffix: | due: YYYY-MM-DD"
+        "# Format: [ ] pending, [x] completed, [~] cancelled; optional metadata tokens: (key:content)"
+    )?;
+    writeln!(
+        file,
+        "# Example metadata: (due:YYYY-MM-DD) (note:some\\:text)"
     )?;
     writeln!(file)?;
 
@@ -335,11 +470,32 @@ mod tests {
 
     #[test]
     fn test_parse_task_with_due_date_suffix() {
-        let task = parse_task_line("[ ] Buy milk | due: 2026-03-21").unwrap();
+        let task = parse_task_line("[ ] Buy milk (due:2026-03-21)").unwrap();
         assert_eq!(task.text, "Buy milk");
         assert_eq!(task.due_date.as_deref(), Some("2026-03-21"));
+        assert!(task.metadata.is_empty());
         assert!(!task.done);
         assert!(!task.cancelled);
+    }
+
+    #[test]
+    fn test_parse_task_with_escaped_metadata_content() {
+        let task = parse_task_line("[ ] Buy milk (due:2026-03-21\\))").unwrap();
+        assert_eq!(task.text, "Buy milk");
+        assert_eq!(task.due_date, None);
+        assert_eq!(task.metadata.len(), 1);
+        assert_eq!(task.metadata[0].key, "due");
+        assert_eq!(task.metadata[0].content, "2026-03-21)");
+    }
+
+    #[test]
+    fn test_parse_task_with_generic_metadata_token() {
+        let task = parse_task_line("[ ] Task (tag:school)").unwrap();
+        assert_eq!(task.text, "Task");
+        assert_eq!(task.due_date, None);
+        assert_eq!(task.metadata.len(), 1);
+        assert_eq!(task.metadata[0].key, "tag");
+        assert_eq!(task.metadata[0].content, "school");
     }
 
     // ============ format_task_line tests ============
@@ -351,6 +507,7 @@ mod tests {
             done: false,
             cancelled: false,
             due_date: None,
+            metadata: Vec::new(),
         };
         assert_eq!(format_task_line(&task), "[ ] Buy milk");
     }
@@ -362,6 +519,7 @@ mod tests {
             done: true,
             cancelled: false,
             due_date: None,
+            metadata: Vec::new(),
         };
         assert_eq!(format_task_line(&task), "[x] File taxes");
     }
@@ -373,6 +531,7 @@ mod tests {
             done: false,
             cancelled: true,
             due_date: None,
+            metadata: Vec::new(),
         };
         assert_eq!(format_task_line(&task), "[~] Reschedule meeting");
     }
@@ -385,6 +544,7 @@ mod tests {
             done: true,
             cancelled: true,
             due_date: None,
+            metadata: Vec::new(),
         };
         assert_eq!(format_task_line(&task), "[x] Task");
     }
@@ -396,6 +556,7 @@ mod tests {
             done: false,
             cancelled: false,
             due_date: None,
+            metadata: Vec::new(),
         };
         assert_eq!(format_task_line(&task), "[ ] ");
     }
@@ -407,8 +568,24 @@ mod tests {
             done: false,
             cancelled: false,
             due_date: Some("2026-03-21".to_string()),
+            metadata: Vec::new(),
         };
-        assert_eq!(format_task_line(&task), "[ ] Buy milk | due: 2026-03-21");
+        assert_eq!(format_task_line(&task), "[ ] Buy milk (due:2026-03-21)");
+    }
+
+    #[test]
+    fn test_format_task_with_generic_metadata() {
+        let task = Task {
+            text: "Buy milk".to_string(),
+            done: false,
+            cancelled: false,
+            due_date: None,
+            metadata: vec![TaskMetadata {
+                key: "note".to_string(),
+                content: "call mom".to_string(),
+            }],
+        };
+        assert_eq!(format_task_line(&task), "[ ] Buy milk (note:call mom)");
     }
 
     // ============ Round-trip tests (parse -> format -> parse) ============
@@ -427,13 +604,33 @@ mod tests {
 
     #[test]
     fn test_roundtrip_task_with_due_date() {
-        let original = "[ ] Buy milk | due: 2026-03-21";
+        let original = "[ ] Buy milk (due:2026-03-21)";
         let task = parse_task_line(original).unwrap();
         let formatted = format_task_line(&task);
         assert_eq!(original, formatted);
         let reparsed = parse_task_line(&formatted).unwrap();
         assert_eq!(task.text, reparsed.text);
         assert_eq!(task.due_date, reparsed.due_date);
+    }
+
+    #[test]
+    fn test_roundtrip_task_with_multiple_metadata_tokens() {
+        let original = "[ ] Buy milk (due:2026-03-21) (note:call mom) (tag:home)";
+        let task = parse_task_line(original).unwrap();
+        let formatted = format_task_line(&task);
+        assert_eq!(original, formatted);
+        let reparsed = parse_task_line(&formatted).unwrap();
+        assert_eq!(task.text, reparsed.text);
+        assert_eq!(task.due_date, reparsed.due_date);
+        assert_eq!(task.metadata, reparsed.metadata);
+    }
+
+    #[test]
+    fn test_escape_and_unescape_metadata_content() {
+        let original = "a:b(c)\\d";
+        let escaped = escape_metadata_content(original);
+        assert_eq!(escaped, "a\\:b\\(c\\)\\\\d");
+        assert_eq!(unescape_metadata_content(&escaped), original);
     }
 
     #[test]
@@ -504,6 +701,7 @@ mod tests {
             done: false,
             cancelled: false,
             due_date: None,
+            metadata: Vec::new(),
         };
         assert!(!task.done);
         assert!(!task.cancelled);
@@ -516,18 +714,21 @@ mod tests {
             done: false,
             cancelled: false,
             due_date: None,
+            metadata: Vec::new(),
         };
         let done = Task {
             text: "Done".to_string(),
             done: true,
             cancelled: false,
             due_date: None,
+            metadata: Vec::new(),
         };
         let cancelled = Task {
             text: "Cancelled".to_string(),
             done: false,
             cancelled: true,
             due_date: None,
+            metadata: Vec::new(),
         };
 
         assert!(!pending.done && !pending.cancelled);
@@ -545,12 +746,14 @@ mod tests {
                 index_in_day: 0,
                 text: "No due".to_string(),
                 due_date: None,
+                metadata: Vec::new(),
             },
             PendingTask {
                 date: "2026-03-18".to_string(),
                 index_in_day: 1,
                 text: "Has due".to_string(),
                 due_date: Some("2026-03-20".to_string()),
+                metadata: Vec::new(),
             },
         ];
 
@@ -568,12 +771,14 @@ mod tests {
                 index_in_day: 0,
                 text: "Due later".to_string(),
                 due_date: Some("2026-03-25".to_string()),
+                metadata: Vec::new(),
             },
             PendingTask {
                 date: "2026-03-18".to_string(),
                 index_in_day: 1,
                 text: "Most overdue".to_string(),
                 due_date: Some("2026-03-10".to_string()),
+                metadata: Vec::new(),
             },
         ];
 
@@ -591,18 +796,21 @@ mod tests {
                 index_in_day: 1,
                 text: "Newer day".to_string(),
                 due_date: None,
+                metadata: Vec::new(),
             },
             PendingTask {
                 date: "2026-03-16".to_string(),
                 index_in_day: 1,
                 text: "Older day later insert".to_string(),
                 due_date: None,
+                metadata: Vec::new(),
             },
             PendingTask {
                 date: "2026-03-16".to_string(),
                 index_in_day: 0,
                 text: "Older day earlier insert".to_string(),
                 due_date: None,
+                metadata: Vec::new(),
             },
         ];
 
