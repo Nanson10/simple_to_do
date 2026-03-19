@@ -18,6 +18,7 @@ enum EditSource {
 enum EditSubcommand {
     Text,
     DueDate,
+    StartDay,
 }
 
 pub fn run() -> io::Result<()> {
@@ -182,6 +183,7 @@ fn edit_task_flow() -> io::Result<()> {
     match edit_subcommand {
         EditSubcommand::Text => edit_task_text(&target_day, target_index),
         EditSubcommand::DueDate => edit_task_due_date(&target_day, target_index),
+        EditSubcommand::StartDay => move_task_start_day(&target_day, target_index),
     }?;
 
     Ok(())
@@ -191,9 +193,10 @@ fn select_edit_subcommand_flow() -> io::Result<Option<EditSubcommand>> {
     print_edit_subcommand_help();
 
     loop {
-        match prompt_choice("Edit command (1 = text, 2 = due date, 0 = cancel): ")? {
+        match prompt_choice("Edit command (1 = text, 2 = due date, 3 = start day, 0 = cancel): ")? {
             PromptChoice::Number(1) => return Ok(Some(EditSubcommand::Text)),
             PromptChoice::Number(2) => return Ok(Some(EditSubcommand::DueDate)),
+            PromptChoice::Number(3) => return Ok(Some(EditSubcommand::StartDay)),
             PromptChoice::Number(0) => return Ok(None),
             PromptChoice::Number(_) => println!("Please choose a valid option."),
             PromptChoice::NonParsable => print_edit_subcommand_help(),
@@ -205,6 +208,7 @@ fn print_edit_subcommand_help() {
     println!("Command list:");
     println!("1. Edit task text");
     println!("2. Edit due date");
+    println!("3. Move task start day");
     println!("0. Cancel");
 }
 
@@ -288,6 +292,56 @@ fn edit_task_due_date(target_day: &str, target_index: usize) -> io::Result<()> {
         format_task_label(updated_task)
     );
 
+    Ok(())
+}
+
+fn move_task_start_day(target_day: &str, target_index: usize) -> io::Result<()> {
+    let mut source_tasks = read_tasks_for_day(target_day)?;
+    if target_index >= source_tasks.len() {
+        println!("The task could not be found. Please try again.");
+        return Ok(());
+    }
+
+    let task_label = format_task_label(&source_tasks[target_index]);
+    println!("Current start day: {}", target_day);
+    println!("Task: {}", task_label);
+
+    let new_start_day = loop {
+        let input =
+            prompt_line("Enter new start day offset integer or YYYY-MM-DD (0 to cancel): ")?;
+        let trimmed = input.trim();
+
+        if trimmed == "0" {
+            println!("Move start day canceled.");
+            return Ok(());
+        }
+
+        if let Some(day) = parse_day_selector(trimmed) {
+            break format_date_string(day);
+        }
+
+        println!("Invalid input. Enter an integer offset, YYYY-MM-DD, or 0 to cancel.");
+    };
+
+    if new_start_day == target_day {
+        println!("Task start day is unchanged.");
+        return Ok(());
+    }
+
+    if !confirm_action("Confirm move start day? 1 = yes, 0 = no: ")? {
+        println!("Move start day canceled.");
+        return Ok(());
+    }
+
+    let moved_task = source_tasks.remove(target_index);
+    write_tasks_for_day(target_day, &source_tasks)?;
+
+    let mut destination_tasks = read_tasks_for_day(&new_start_day)?;
+    destination_tasks.push(moved_task);
+    write_tasks_for_day(&new_start_day, &destination_tasks)?;
+
+    rebuild_todo_file()?;
+    println!("Moved task from [{}] to [{}].", target_day, new_start_day);
     Ok(())
 }
 

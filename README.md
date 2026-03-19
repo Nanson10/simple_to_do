@@ -8,7 +8,7 @@ A lightweight Rust command-line to-do app that stores tasks in plain text files 
 - Session default day for quick task entry.
 - Add, edit, complete, and cancel tasks.
 - Optional task due dates.
-- Edit subcommands for text or due date updates.
+- Edit subcommands for text, due date, or start day updates.
 - View unfinished tasks across days.
 - Browse historical tasks by date.
 - Pagination for long task lists.
@@ -123,6 +123,7 @@ Edit subcommands (inside command `2`):
 
 - `1` Edit task text
 - `2` Edit task due date
+- `3` Move task start day
 - `0` Cancel
 
 In paginated views:
