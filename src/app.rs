@@ -202,11 +202,6 @@ fn select_session_default_day_flow(current_default: NaiveDate) -> io::Result<Opt
         let input = prompt_line("Enter day offset integer or YYYY-MM-DD: ")?;
         let trimmed = input.trim();
 
-        if trimmed == "0" {
-            println!("Session default day update canceled.");
-            return Ok(None);
-        }
-
         if let Some(day) = parse_day_selector(trimmed) {
             println!("Session default day set to {}.", format_date_string(day));
             return Ok(Some(day));
