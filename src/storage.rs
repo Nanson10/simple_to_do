@@ -7,8 +7,9 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 const TODO_FILE_NAME: &str = "to-do.txt";
+const APP_DIR_NAME: &str = ".simple_to_do";
 
-fn get_data_dir() -> &'static str {
+fn current_storage_subdir() -> &'static str {
     if std::env::var("SIMPLE_TODO_TEST_MODE").is_ok() {
         "test"
     } else {
@@ -16,8 +17,23 @@ fn get_data_dir() -> &'static str {
     }
 }
 
+fn app_root_dir_path() -> PathBuf {
+    if let Some(home_dir) = std::env::var_os("HOME") {
+        return PathBuf::from(home_dir).join(APP_DIR_NAME);
+    }
+
+    // Fallback for environments without HOME set.
+    PathBuf::from(".").join(APP_DIR_NAME)
+}
+
+fn legacy_data_dir_path() -> PathBuf {
+    PathBuf::from(current_storage_subdir())
+}
+
 pub fn ensure_data_dir() -> io::Result<()> {
-    fs::create_dir_all(get_data_dir())
+    let target_dir = data_dir_path();
+    fs::create_dir_all(&target_dir)?;
+    migrate_legacy_data_if_needed(&target_dir)
 }
 
 pub fn read_tasks_for_day(date: &str) -> io::Result<Vec<Task>> {
@@ -120,7 +136,33 @@ pub fn rebuild_todo_file() -> io::Result<()> {
 }
 
 fn data_dir_path() -> PathBuf {
-    PathBuf::from(get_data_dir())
+    app_root_dir_path().join(current_storage_subdir())
+}
+
+fn migrate_legacy_data_if_needed(target_dir: &Path) -> io::Result<()> {
+    let legacy_dir = legacy_data_dir_path();
+    if !legacy_dir.exists() || !legacy_dir.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(legacy_dir)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        if !source_path.is_file() {
+            continue;
+        }
+
+        let Some(file_name) = source_path.file_name() else {
+            continue;
+        };
+
+        let target_path = target_dir.join(file_name);
+        if !target_path.exists() {
+            fs::copy(&source_path, &target_path)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn day_file_path(date: &str) -> PathBuf {
